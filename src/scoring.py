@@ -8,12 +8,17 @@ momentum of 0.30 cannot be averaged directly — so each is converted to a
 cross-sectional z-score before being combined.
 
 **Outliers are handled in two stages, deliberately.** Raw values are first
-winsorized at the 1st and 99th percentiles, then z-scored, then the
-resulting z-scores are clipped at ±3. The first stage matters more than it
-looks: an extreme observation contaminates the mean and standard deviation
-used to standardize every other stock, so clipping only after the fact
-leaves the damage already done. Winsorizing first means the distribution is
-computed from a sane sample; the final clip is a light backstop.
+winsorized against a robust centre and spread (median ± 3 rescaled MADs),
+then z-scored, then the resulting z-scores are clipped at ±3. The first
+stage matters more than it looks: an extreme observation contaminates the
+mean and standard deviation used to standardize every other stock, so
+clipping only after the fact leaves the damage already done. Winsorizing
+first means the distribution is computed from a sane sample; the final clip
+is a light backstop.
+
+The robust bound is not interchangeable with a percentile one here — see
+`_winsorize` for why a 1st/99th percentile cut silently stops working at
+this universe size.
 
 **Sector-neutral scoring is available and off by default.** Comparing every
 stock against the whole universe means a value screen mostly returns banks
@@ -31,18 +36,46 @@ import pandas as pd
 
 from src.factors import FACTOR_GROUPS
 
-WINSOR_PERCENTILES = (0.01, 0.99)
 ZSCORE_CLIP = 3.0
+MAD_CLIP = 3.0
+MAD_TO_SIGMA = 1.4826  # makes MAD comparable to a standard deviation under normality
 MIN_SECTOR_SIZE = 5
 MIN_GROUPS_REQUIRED = 3
 
 
-def _winsorize(series, lower=WINSOR_PERCENTILES[0], upper=WINSOR_PERCENTILES[1]):
+def _winsorize(series, n_mad=MAD_CLIP):
+    """
+    Clips to median ± n_mad robust deviations, where the robust deviation is
+    the median absolute deviation rescaled by 1.4826 so it matches a standard
+    deviation for normally distributed data.
+
+    A percentile winsorization (the more common first instinct, and what this
+    function used to do) fails on samples this size. At N=53 the 99th
+    percentile is interpolated between the largest and second-largest
+    observation, so the bound lands right next to the outlier it is supposed
+    to contain: a value 1000x out of scale gets clipped to roughly 900x out of
+    scale, and the mean and standard deviation are contaminated anyway. The
+    breakdown is silent — the code runs, the numbers look plausible, and the
+    stated protection simply is not there.
+
+    Median and MAD have a 50% breakdown point, so the bound is set by the bulk
+    of the distribution regardless of how extreme the tail is or how few names
+    are in the universe.
+    """
     valid = series.dropna()
     if len(valid) < 5:
         return series
-    lo, hi = valid.quantile(lower), valid.quantile(upper)
-    return series.clip(lower=lo, upper=hi)
+
+    median = valid.median()
+    mad = (valid - median).abs().median() * MAD_TO_SIGMA
+
+    if not np.isfinite(mad) or mad == 0:
+        # Degenerate spread (e.g. most values identical). Fall back to the
+        # empirical range rather than collapsing every observation onto the
+        # median.
+        return series.clip(lower=valid.min(), upper=valid.max())
+
+    return series.clip(lower=median - n_mad * mad, upper=median + n_mad * mad)
 
 
 def zscore(series, clip=ZSCORE_CLIP):

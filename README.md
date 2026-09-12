@@ -12,9 +12,9 @@ The combined price-based factor model **did not work** on this universe over 201
 
 | Factor (backtested alone) | Q1 return | Q5 return | Q1 - Q5 spread |
 |---|---|---|---|
-| Momentum | 23.89% | 14.61% | **+928 bps** |
+| Momentum | 23.37% | 14.05% | **+933 bps** |
 | Low Volatility | 12.10% | 33.92% | **-2182 bps** |
-| Combined (equal-weighted) | 17.65% | 21.55% | -389 bps |
+| Combined (equal-weighted) | 14.88% | 22.53% | -765 bps |
 
 *Equal-weight universe benchmark: 19.34% annualized, Sharpe 0.91.*
 
@@ -22,7 +22,7 @@ Momentum ranked stocks in the intended direction. Low volatility ranked them alm
 
 The low-volatility reversal is not a bug, and checking that was the first thing worth doing. It is what the low-volatility anomaly does when it is applied to the wrong universe. The anomaly is documented on broad cross-sections including small and mid caps, over horizons containing genuine bear markets. This universe is 53 mega-caps over a decade in which the market's return was concentrated in high-beta mega-cap growth names. Screening for low volatility in that setting systematically avoided the stocks that produced the returns. The factor did not fail randomly; it failed for a reason visible in the data.
 
-It is also worth stating that the momentum top quintile, despite the positive spread, produced a Sharpe of 0.88 against the equal-weighted universe's 0.91 — it earned more return by taking more risk, not by ranking better on a risk-adjusted basis.
+It is also worth stating that the momentum top quintile, despite the positive spread, produced a Sharpe of 0.86 against the equal-weighted universe's 0.91 — it earned more return by taking more risk, not by ranking better on a risk-adjusted basis.
 
 ![Factor attribution](outputs/factor_attribution.png)
 
@@ -42,7 +42,9 @@ It is also worth stating that the momentum top quintile, despite the positive sp
 
    Value and leverage enter as *yields and reciprocals rather than negated ratios*. Price ratios are bounded below by zero with a long right tail, so a z-score of minus-P/E is driven almost entirely by the single most expensive name in the universe; their reciprocals are far better behaved. The momentum skip-month is not decoration either: equities show short-term reversal at the one-month horizon, a distinct and opposing effect, so including the most recent month mixes a reversal signal into a momentum factor.
 
-3. **Standardization** (`src/scoring.py`) — raw values are winsorized at the 1st and 99th percentiles, z-scored cross-sectionally, then clipped at ±3. The order matters: an outlier contaminates the mean and standard deviation used to standardize every *other* stock, so clipping only after the fact leaves the damage already done.
+3. **Standardization** (`src/scoring.py`) — raw values are winsorized against a robust centre and spread (median ± 3 rescaled MADs), z-scored cross-sectionally, then clipped at ±3. The order matters: an outlier contaminates the mean and standard deviation used to standardize every *other* stock, so clipping only after the fact leaves the damage already done.
+
+   The *robust* bound is not interchangeable with a percentile one at this universe size, which is worth spelling out because the percentile version is the more natural first instinct and it fails silently. With 53 names, the 99th percentile is interpolated between the largest and second-largest observation, so the bound lands right next to the outlier it is meant to contain — a value 1000x out of scale gets clipped to roughly 900x out of scale, and the mean and standard deviation are contaminated regardless. This project used a 1st/99th percentile cut until a synthetic-data test showed it reducing the z-score spread across ten well-behaved observations to 0.003. Median and MAD have a 50% breakdown point, so the bound is set by the bulk of the distribution no matter how extreme the tail or how small the universe.
 
 4. **Composite and ranking** — factor groups are averaged equal-weighted into a composite, and the universe is sorted into quintiles. Stocks scored on fewer than three of the four groups are left unranked rather than scored on thin evidence.
 
@@ -116,7 +118,7 @@ Requires an internet connection. Individual ticker failures are handled without 
 
 ## Methodology notes and limitations
 
-- **Survivorship bias.** The universe is today's constituents, so the backtest never holds a company that was delisted, acquired, or dropped from the index. This biases historical returns upward across every quintile — note that even the *bottom* quintile returned 21.5% annualized, which is not a plausible figure for genuinely weak stocks and is largely this bias showing through. Point-in-time index membership would be needed to remove it.
+- **Survivorship bias.** The universe is today's constituents, so the backtest never holds a company that was delisted, acquired, or dropped from the index. This biases historical returns upward across every quintile — note that even the *bottom* quintile returned 22.5% annualized, which is not a plausible figure for genuinely weak stocks and is largely this bias showing through. Point-in-time index membership would be needed to remove it.
 - **Sector-neutral scoring is available but not the default.** Comparing every stock against the whole universe means a value screen mostly returns banks and energy — visible in the current output, where the top four names are all financials. Scoring within sector removes that, but this universe carries 3-8 names per sector and a z-score over three observations is not a meaningful statistic. Sectors below the size threshold fall back to universe-wide scoring, and each run reports which ones did.
 - **Simplified factor definitions.** These are practitioner-style approximations, not the full Fama-French/Carhart construction with double-sorted portfolios and additional controls.
 - **No transaction costs.** Quarterly rebalancing of quintile portfolios would incur real costs, and the long/short leg assumes shorting is frictionless and always available. Neither holds.
